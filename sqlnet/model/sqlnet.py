@@ -89,24 +89,55 @@ class SQLNet(nn.Module):
     def forward(self, q, col, col_num, pred_entry,
             gt_where = None, gt_cond=None, reinforce=False, gt_sel=None):
         B = len(q)
+        pred_agg, pred_sel, pred_cond = pred_entry
 
         agg_score = None
         sel_score = None
         cond_score = None
 
         #Predict aggregator
-        x_emb_var, x_len = self.embed_layer.gen_x_batch(q, col)
-        col_inp_var, col_name_len, col_len = \
-                self.embed_layer.gen_col_batch(col)
-        max_x_len = max(x_len)
-        
-        agg_score = self.agg_pred(x_emb_var, x_len, col_inp_var,
-                    col_name_len, col_len, col_num, gt_sel=gt_sel)
-        sel_score = self.sel_pred(x_emb_var, x_len, col_inp_var,
-                    col_name_len, col_len, col_num)
-        cond_score = self.cond_pred(x_emb_var, x_len, col_inp_var,
-                    col_name_len, col_len, col_num,
-                    gt_where, gt_cond, reinforce=reinforce)
+        if self.trainable_emb:
+            if pred_agg:
+                x_emb_var, x_len = self.agg_embed_layer.gen_x_batch(q, col)
+                col_inp_var, col_name_len, col_len = \
+                        self.agg_embed_layer.gen_col_batch(col)
+                max_x_len = max(x_len)
+                agg_score = self.agg_pred(x_emb_var, x_len, col_inp_var,
+                        col_name_len, col_len, col_num, gt_sel=gt_sel)
+
+            if pred_sel:
+                x_emb_var, x_len = self.sel_embed_layer.gen_x_batch(q, col)
+                col_inp_var, col_name_len, col_len = \
+                        self.sel_embed_layer.gen_col_batch(col)
+                max_x_len = max(x_len)
+                sel_score = self.sel_pred(x_emb_var, x_len, col_inp_var,
+                        col_name_len, col_len, col_num)
+
+            if pred_cond:
+                x_emb_var, x_len = self.cond_embed_layer.gen_x_batch(q, col)
+                col_inp_var, col_name_len, col_len = \
+                        self.cond_embed_layer.gen_col_batch(col)
+                max_x_len = max(x_len)
+                cond_score = self.cond_pred(x_emb_var, x_len, col_inp_var,
+                        col_name_len, col_len, col_num,
+                        gt_where, gt_cond, reinforce=reinforce)
+        else:
+            x_emb_var, x_len = self.embed_layer.gen_x_batch(q, col)
+            col_inp_var, col_name_len, col_len = \
+                    self.embed_layer.gen_col_batch(col)
+            max_x_len = max(x_len)
+            if pred_agg:
+                agg_score = self.agg_pred(x_emb_var, x_len, col_inp_var,
+                        col_name_len, col_len, col_num, gt_sel=gt_sel)
+
+            if pred_sel:
+                sel_score = self.sel_pred(x_emb_var, x_len, col_inp_var,
+                        col_name_len, col_len, col_num)
+
+            if pred_cond:
+                cond_score = self.cond_pred(x_emb_var, x_len, col_inp_var,
+                        col_name_len, col_len, col_num,
+                        gt_where, gt_cond, reinforce=reinforce)
 
         return (agg_score, sel_score, cond_score)
 
@@ -123,7 +154,7 @@ class SQLNet(nn.Module):
             else:
                 agg_truth_var = Variable(data)
 
-            loss += self.CE(agg_score, agg_truth_var)
+            loss += 0.001*self.CE(agg_score, agg_truth_var)
 
         if pred_sel:
             sel_truth = map(lambda x:x[1], truth_num)
@@ -146,7 +177,7 @@ class SQLNet(nn.Module):
                 cond_num_truth_var = Variable(data.cuda())
             else:
                 cond_num_truth_var = Variable(data)
-            loss += self.CE(cond_num_score, cond_num_truth_var)
+            loss += 10*self.CE(cond_num_score, cond_num_truth_var)
 
             #Evaluate the columns of conditions
             T = len(cond_col_score[0])
@@ -165,7 +196,7 @@ class SQLNet(nn.Module):
             bce_loss = -torch.mean( 3*(cond_col_truth_var * \
                     torch.log(cond_col_prob+1e-10)) + \
                     (1-cond_col_truth_var) * torch.log(1-cond_col_prob+1e-10) )
-            loss += bce_loss
+            loss += 10*bce_loss
 
             #Evaluate the operator of conditions
             for b in range(len(truth_num)):
@@ -177,7 +208,7 @@ class SQLNet(nn.Module):
                 else:
                     cond_op_truth_var = Variable(data)
                 cond_op_pred = cond_op_score[b, :len(truth_num[b][4])]
-                loss += (self.CE(cond_op_pred, cond_op_truth_var) \
+                loss += 10*(self.CE(cond_op_pred, cond_op_truth_var) \
                         / len(truth_num))
 
             #Evaluate the strings of conditions
@@ -193,7 +224,7 @@ class SQLNet(nn.Module):
                         cond_str_truth_var = Variable(data)
                     str_end = len(cond_str_truth)-1
                     cond_str_pred = cond_str_score[b, idx, :str_end]
-                    loss += (self.CE(cond_str_pred, cond_str_truth_var) \
+                    loss += 10*(self.CE(cond_str_pred, cond_str_truth_var) \
                             / (len(gt_where) * len(gt_where[b])))
 
         return loss
