@@ -52,6 +52,7 @@ class SQLNet(nn.Module):
 
 
         self.CE = nn.CrossEntropyLoss()
+        self.MSE = nn.MSELoss()
         self.softmax = nn.Softmax()
         self.log_softmax = nn.LogSoftmax()
         self.bce_logit = nn.BCEWithLogitsLoss()
@@ -87,13 +88,32 @@ class SQLNet(nn.Module):
 
 
     def forward(self, q, col, col_num, pred_entry,
-            gt_where = None, gt_cond=None, reinforce=False, gt_sel=None):
+            gt_where = None, gt_cond=None, reinforce=False, gt_sel=None,
+            find_table=False):
         B = len(q)
         pred_agg, pred_sel, pred_cond = pred_entry
 
         agg_score = None
         sel_score = None
         cond_score = None
+        
+        if find_table:
+            if self.trainable_emb:
+                x_emb_var, x_len = self.sel_embed_layer.gen_x_batch(q, col)
+                col_inp_var, col_name_len, col_len = \
+                        self.sel_embed_layer.gen_col_batch(col)
+                max_x_len = max(x_len)
+                score = self.agg_pred(x_emb_var, x_len, col_inp_var,
+                        col_name_len, col_len, col_num)
+            else:
+                x_emb_var, x_len = self.embed_layer.gen_x_batch(q, col)
+                col_inp_var, col_name_len, col_len = \
+                        self.embed_layer.gen_col_batch(col)
+                max_x_len = max(x_len)
+                score = self.agg_pred(x_emb_var, x_len, col_inp_var,
+                        col_name_len, col_len, col_num)
+            
+            return score
 
         #Predict aggregator
         if self.trainable_emb:
@@ -141,11 +161,25 @@ class SQLNet(nn.Module):
 
         return (agg_score, sel_score, cond_score)
 
-    def loss(self, score, truth_num, pred_entry, gt_where):
+    def loss(self, score, truth_num, pred_entry, gt_where, find_table=False):
+        if find_table:
+            sel_truth = map(lambda x:x[-1], truth_num)
+            data = torch.from_numpy(np.array(sel_truth)).type('torch.FloatTensor')
+            if self.gpu:
+                sel_truth_var = Variable(data.cuda())
+            else:
+                sel_truth_var = Variable(data)
+            
+            return self.MSE(torch.sum(score, dim=1)/score.shape[1], sel_truth_var)
+            
+            
         pred_agg, pred_sel, pred_cond = pred_entry
         agg_score, sel_score, cond_score = score
 
         loss = 0
+        
+        
+            
         if pred_agg:
             agg_truth = map(lambda x:x[0], truth_num)
             data = torch.from_numpy(np.array(agg_truth))
@@ -163,7 +197,7 @@ class SQLNet(nn.Module):
                 sel_truth_var = Variable(data.cuda())
             else:
                 sel_truth_var = Variable(data)
-
+            
             loss += self.CE(sel_score, sel_truth_var)
 
         if pred_cond:
