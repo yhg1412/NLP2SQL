@@ -26,11 +26,13 @@ if __name__ == '__main__':
             help='Train word embedding for SQLNet(requires pretrained model).')
     args = parser.parse_args()
 
+    print(args)
+
     N_word=300
     B_word=42
     if args.toy:
         USE_SMALL=True
-        GPU=True
+        GPU=False
         BATCH_SIZE=15
     else:
         USE_SMALL=False

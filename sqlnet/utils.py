@@ -2,6 +2,7 @@ import json
 from lib.dbengine import DBEngine
 import re
 import numpy as np
+import json
 #from nltk.tokenize import StanfordTokenizer
 
 def load_data(sql_paths, table_paths, use_small=False):
@@ -142,7 +143,8 @@ def epoch_train(model, optimizer, batch_size, sql_data, table_data, pred_entry):
         score = model.forward(q_seq, col_seq, col_num, pred_entry,
                 gt_where=gt_where_seq, gt_cond=gt_cond_seq, gt_sel=gt_sel_seq)
         loss = model.loss(score, ans_seq, pred_entry, gt_where_seq)
-        cum_loss += loss.data.cpu().numpy()[0]*(ed - st)
+        # print(loss.data.cpu().numpy())
+        cum_loss += loss.data.cpu().numpy() * (ed - st)
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
@@ -188,12 +190,32 @@ def epoch_exec_acc(model, batch_size, sql_data, table_data, db_path):
 
     return tot_acc_num / len(sql_data)
 
+def pred_query_string(model, sql_data, table_data, db_path):
+    engine = DBEngine(db_path)
+    model.eval()
+    perm = list(range(len(sql_data)))
+    q_seq, col_seq, col_num, ans_seq, query_seq, gt_cond_seq, raw_data = \
+        to_batch_seq(sql_data, table_data, perm, 0, 2, ret_vis_data=True)
+    score = model.forward(q_seq, col_seq, col_num, (True, True, True))
+    raw_q_seq = [x[0] for x in raw_data]
+    raw_col_seq = [x[1] for x in raw_data]
+    pred_queries = model.gen_query(score, q_seq, col_seq,
+                raw_q_seq, raw_col_seq, (True, True, True))
+    tid = list(table_data.keys())[0]
+    sql_pred = pred_queries[0]
+    result_query = engine.execute(tid, sql_pred['sel'], sql_pred['agg'], sql_pred['conds'], cols=table_data[tid]['header'])
+    return result_query
+
 def epoch_acc(model, batch_size, sql_data, table_data, pred_entry):
     model.eval()
     perm = list(range(len(sql_data)))
     st = 0
     one_acc_num = 0.0
     tot_acc_num = 0.0
+    print_every = 0
+    print("sql_data length", len(sql_data))
+    print("sql_data 0:2", sql_data[0:2])
+
     while st < len(sql_data):
         ed = st+batch_size if st+batch_size < len(perm) else len(perm)
 
@@ -204,11 +226,28 @@ def epoch_acc(model, batch_size, sql_data, table_data, pred_entry):
         gt_sel_seq = [x[1] for x in ans_seq]
         score = model.forward(q_seq, col_seq, col_num,
                 pred_entry, gt_sel = gt_sel_seq)
+        if print_every % 10 == 0:
+            print("sql_data", json.dumps(sql_data[st]))
+            print("table_data", json.dumps(table_data[sql_data[perm[st]]['table_id']]))
+            print("Agg Score", score[0].shape, col_num)
+            print(score[0])
+            print("Sel Score", score[1].shape, np.max(col_num))
+            print(score[1])
+            cond_num_score,cond_col_score,cond_op_score,cond_str_score =\
+                        [x.data.cpu().numpy() for x in score[2]]
+            print("Cond Score")
+            print(cond_num_score.shape)
+            print(cond_col_score.shape)
+            print(cond_op_score.shape)
+            print(cond_str_score.shape)
+        print_every+=1
         pred_queries = model.gen_query(score, q_seq, col_seq,
                 raw_q_seq, raw_col_seq, pred_entry)
+        if print_every % 10 == 0:
+            print(pred_queries)
         one_err, tot_err = model.check_acc(raw_data,
                 pred_queries, query_gt, pred_entry)
-
+        
         one_acc_num += (ed-st-one_err)
         tot_acc_num += (ed-st-tot_err)
 
@@ -285,3 +324,4 @@ def load_word_emb(file_name, load_used=False, use_small=False):
         with open('glove/usedwordemb.npy') as inf:
             word_emb_val = np.load(inf)
         return w2i, word_emb_val
+

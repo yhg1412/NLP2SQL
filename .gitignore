@@ -7,3 +7,6 @@
 glove/*
 saved_model/*
 !saved_model/.keep
+.idea/
+model_baset_best/
+model_best_noca/

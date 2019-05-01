@@ -18,7 +18,7 @@ class DBEngine:
     def execute_query(self, table_id, query, *args, **kwargs):
         return self.execute(table_id, query.sel_index, query.agg_index, query.conditions, *args, **kwargs)
 
-    def execute(self, table_id, select_index, aggregation_index, conditions, lower=True):
+    def execute(self, table_id, select_index, aggregation_index, conditions, lower=True, cols=None):
         if not table_id.startswith('table'):
             table_id = 'table_{}'.format(table_id.replace('-', '_'))
         table_info = self.db.query('SELECT sql from sqlite_master WHERE tbl_name = :name', name=table_id).all()[0].sql.replace('\n','')
@@ -28,9 +28,13 @@ class DBEngine:
             c, t = tup.split()
             schema[c] = t
         select = 'col{}'.format(select_index)
+        if cols != None:
+            select = cols[select_index]
         agg = agg_ops[aggregation_index]
         if agg:
             select = '{}({})'.format(agg, select)
+            if cols != None:
+                select = '{}({})'.format(agg, select)
         where_clause = []
         where_map = {}
         for col_index, op, val in conditions:
@@ -41,12 +45,20 @@ class DBEngine:
                     val = float(parse_decimal(val))
                 except NumberFormatError as e:
                     val = float(num_re.findall(val)[0])
-            where_clause.append('col{} {} :col{}'.format(col_index, cond_ops[op], col_index))
-            where_map['col{}'.format(col_index)] = val
+            if cols == None:
+                where_clause.append('col{} {} :col{}'.format(col_index, cond_ops[op], col_index))
+                where_map['col{}'.format(col_index)] = val
+            else:
+                where_clause.append('{} {} {}'.format(cols[col_index], cond_ops[op], val))
+                where_map['col{}'.format(col_index)] = val
         where_str = ''
         if where_clause:
             where_str = 'WHERE ' + ' AND '.join(where_clause)
         query = 'SELECT {} AS result FROM {} {}'.format(select, table_id, where_str)
         #print query
-        out = self.db.query(query, **where_map)
-        return [o.result for o in out]
+        if cols == None:
+            out = self.db.query(query, **where_map)
+            print([o.result for o in out])
+            return [o.result for o in out]
+        else:
+            return query
