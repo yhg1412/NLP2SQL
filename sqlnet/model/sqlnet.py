@@ -89,24 +89,55 @@ class SQLNet(nn.Module):
     def forward(self, q, col, col_num, pred_entry,
             gt_where = None, gt_cond=None, reinforce=False, gt_sel=None):
         B = len(q)
+        pred_agg, pred_sel, pred_cond = pred_entry
 
         agg_score = None
         sel_score = None
         cond_score = None
 
-        #Predict aggregator
-        x_emb_var, x_len = self.embed_layer.gen_x_batch(q, col)
-        col_inp_var, col_name_len, col_len = \
-                self.embed_layer.gen_col_batch(col)
-        max_x_len = max(x_len)
-        
-        agg_score = self.agg_pred(x_emb_var, x_len, col_inp_var,
-                    col_name_len, col_len, col_num, gt_sel=gt_sel)
-        sel_score = self.sel_pred(x_emb_var, x_len, col_inp_var,
-                    col_name_len, col_len, col_num)
-        cond_score = self.cond_pred(x_emb_var, x_len, col_inp_var,
-                    col_name_len, col_len, col_num,
-                    gt_where, gt_cond, reinforce=reinforce)
+        # Aggregator predictor, Select predictor and Where predictor
+        if self.trainable_emb:
+            if pred_agg:
+                x_emb_var, x_len = self.agg_embed_layer.gen_x_batch(q, col)
+                col_inp_var, col_name_len, col_len = \
+                        self.agg_embed_layer.gen_col_batch(col)
+                max_x_len = max(x_len)
+                agg_score = self.agg_pred(x_emb_var, x_len, col_inp_var,
+                        col_name_len, col_len, col_num, gt_sel=gt_sel)
+
+            if pred_sel:
+                x_emb_var, x_len = self.sel_embed_layer.gen_x_batch(q, col)
+                col_inp_var, col_name_len, col_len = \
+                        self.sel_embed_layer.gen_col_batch(col)
+                max_x_len = max(x_len)
+                sel_score = self.sel_pred(x_emb_var, x_len, col_inp_var,
+                        col_name_len, col_len, col_num)
+
+            if pred_cond:
+                x_emb_var, x_len = self.cond_embed_layer.gen_x_batch(q, col)
+                col_inp_var, col_name_len, col_len = \
+                        self.cond_embed_layer.gen_col_batch(col)
+                max_x_len = max(x_len)
+                cond_score = self.cond_pred(x_emb_var, x_len, col_inp_var,
+                        col_name_len, col_len, col_num,
+                        gt_where, gt_cond, reinforce=reinforce)
+        else:
+            x_emb_var, x_len = self.embed_layer.gen_x_batch(q, col)
+            col_inp_var, col_name_len, col_len = \
+                    self.embed_layer.gen_col_batch(col)
+            max_x_len = max(x_len)
+            if pred_agg:
+                agg_score = self.agg_pred(x_emb_var, x_len, col_inp_var,
+                        col_name_len, col_len, col_num, gt_sel=gt_sel)
+
+            if pred_sel:
+                sel_score = self.sel_pred(x_emb_var, x_len, col_inp_var,
+                        col_name_len, col_len, col_num)
+
+            if pred_cond:
+                cond_score = self.cond_pred(x_emb_var, x_len, col_inp_var,
+                        col_name_len, col_len, col_num,
+                        gt_where, gt_cond, reinforce=reinforce)
 
         return (agg_score, sel_score, cond_score)
 

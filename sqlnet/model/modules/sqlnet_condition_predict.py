@@ -7,224 +7,277 @@ import numpy as np
 from net_utils import run_lstm, col_name_encode
 
 class SQLNetCondPredictor(nn.Module):
-    def __init__(self, N_word, N_h, N_depth, max_col_num, max_tok_num, use_ca=True, gpu=False):
+    def __init__(self, N_word, N_h, N_depth, max_col_num, max_tok_num, use_ca, gpu):
         super(SQLNetCondPredictor, self).__init__()
         self.N_h = N_h
         self.max_tok_num = max_tok_num
         self.max_col_num = max_col_num
+        self.gpu = gpu
         self.use_ca = use_ca
 
-        self.number_lstm = nn.LSTM(input_size=N_word, hidden_size=N_h/2,
+        self.cond_num_lstm = nn.GRU(input_size=N_word, hidden_size=N_h/2,
                 num_layers=N_depth, batch_first=True,
                 dropout=0.3, bidirectional=True)
-        self.number_att = nn.Linear(N_h, 1)
-        self.number_out = nn.Sequential(nn.Linear(N_h, N_h),
+        self.cond_num_att = nn.Linear(N_h, 1)
+        self.cond_num_out = nn.Sequential(nn.Linear(N_h, N_h),
                 nn.Tanh(), nn.Linear(N_h, 5))
-        self.number_encode_colname = nn.LSTM(input_size=N_word, hidden_size=N_h/2,
+        self.cond_num_name_enc = nn.LSTM(input_size=N_word, hidden_size=N_h/2,
                 num_layers=N_depth, batch_first=True,
                 dropout=0.3, bidirectional=True)
-        self.number_col_att = nn.Linear(N_h, 1)
-        self.number_hid1 = nn.Linear(N_h, 2*N_h)
-        self.number_hid2 = nn.Linear(N_h, 2*N_h)
+        self.cond_num_col_att = nn.Linear(N_h, 1)
+        self.cond_num_col2hid1 = nn.Linear(N_h, 2*N_h)
+        self.cond_num_col2hid2 = nn.Linear(N_h, 2*N_h)
 
-        self.column_lstm = nn.LSTM(input_size=N_word, hidden_size=N_h/2,
+        self.cond_col_lstm = nn.GRU(input_size=N_word, hidden_size=N_h/2,
                 num_layers=N_depth, batch_first=True,
                 dropout=0.3, bidirectional=True)
-        self.column_att = nn.Linear(N_h, N_h)
-        self.column_encode_colname = nn.LSTM(input_size=N_word, hidden_size=N_h/2,
+        if use_ca:
+            print "Using column attention on where predicting"
+            self.cond_col_att = nn.Linear(N_h, N_h)
+        else:
+            print "Not using column attention on where predicting"
+            self.cond_col_att = nn.Linear(N_h, 1)
+        self.cond_col_name_enc = nn.LSTM(input_size=N_word, hidden_size=N_h/2,
                 num_layers=N_depth, batch_first=True,
                 dropout=0.3, bidirectional=True)
-        self.column_out_K = nn.Linear(N_h, N_h)
-        self.column_out_col = nn.Linear(N_h, N_h)
-        self.column_out = nn.Sequential(nn.ReLU(), nn.Linear(N_h, 1))
+        self.cond_col_out_K = nn.Linear(N_h, N_h)
+        self.cond_col_out_col = nn.Linear(N_h, N_h)
+        self.cond_col_out = nn.Sequential(nn.ReLU(), nn.Linear(N_h, 1))
 
-        self.op_lstm = nn.LSTM(input_size=N_word, hidden_size=N_h/2,
+        self.cond_op_lstm = nn.GRU(input_size=N_word, hidden_size=N_h/2,
                 num_layers=N_depth, batch_first=True,
                 dropout=0.3, bidirectional=True)
-        self.op_att = nn.Linear(N_h, N_h)
-        self.op_out_K = nn.Linear(N_h, N_h)
-        self.op_encode_colname = nn.LSTM(input_size=N_word, hidden_size=N_h/2,
+        if use_ca:
+            self.cond_op_att = nn.Linear(N_h, N_h)
+        else:
+            self.cond_op_att = nn.Linear(N_h, 1)
+        self.cond_op_out_K = nn.Linear(N_h, N_h)
+        self.cond_op_name_enc = nn.LSTM(input_size=N_word, hidden_size=N_h/2,
                 num_layers=N_depth, batch_first=True,
                 dropout=0.3, bidirectional=True)
-        self.op_out_col = nn.Linear(N_h, N_h)
-        self.op_out = nn.Sequential(nn.Linear(N_h, N_h), nn.Tanh(),
+        self.cond_op_out_col = nn.Linear(N_h, N_h)
+        self.cond_op_out = nn.Sequential(nn.Linear(N_h, N_h), nn.Tanh(),
                 nn.Linear(N_h, 3))
 
-        self.str_lstm = nn.LSTM(input_size=N_word, hidden_size=N_h/2,
+        self.cond_str_lstm = nn.GRU(input_size=N_word, hidden_size=N_h/2,
                 num_layers=N_depth, batch_first=True,
                 dropout=0.3, bidirectional=True)
-        self.str_decoder = nn.LSTM(input_size=self.max_tok_num,
+        self.cond_str_decoder = nn.LSTM(input_size=self.max_tok_num,
                 hidden_size=N_h, num_layers=N_depth,
                 batch_first=True, dropout=0.3)
-        self.str_encode_colname = nn.LSTM(input_size=N_word, hidden_size=N_h/2,
+        self.cond_str_name_enc = nn.LSTM(input_size=N_word, hidden_size=N_h/2,
                 num_layers=N_depth, batch_first=True,
                 dropout=0.3, bidirectional=True)
-        self.str_out_g = nn.Linear(N_h, N_h)
-        self.str_out_h = nn.Linear(N_h, N_h)
-        self.str_out_col = nn.Linear(N_h, N_h)
-        self.str_out = nn.Sequential(nn.ReLU(), nn.Linear(N_h, 1))
+        self.cond_str_out_g = nn.Linear(N_h, N_h)
+        self.cond_str_out_h = nn.Linear(N_h, N_h)
+        self.cond_str_out_col = nn.Linear(N_h, N_h)
+        self.cond_str_out = nn.Sequential(nn.ReLU(), nn.Linear(N_h, 1))
 
         self.softmax = nn.Softmax()
 
-    def generate_condition_batch(self, tokens):
-        dim = len(tokens)
-        max_len = max(max([max([len(tok) for tok in token_seq] + [0]) for token_seq in tokens])-1, 1)
 
-        arr = np.zeros((dim, 4, max_len, self.max_tok_num), dtype=np.float32)
-        lens = np.zeros((dim, 4))
-
-        for i, token_seq in enumerate(tokens):
+    def gen_gt_batch(self, split_tok_seq):
+        B = len(split_tok_seq)
+        max_len = max([max([len(tok) for tok in tok_seq]+[0]) for 
+            tok_seq in split_tok_seq]) - 1 # The max seq len in the batch.
+        if max_len < 1:
+            max_len = 1
+        ret_array = np.zeros((
+            B, 4, max_len, self.max_tok_num), dtype=np.float32)
+        ret_len = np.zeros((B, 4))
+        for b, tok_seq in enumerate(split_tok_seq):
             idx = 0
-            for idx, token in enumerate(token_seq):
-                sel_token = token[:-1]
-                lens[i, idx] = len(sel_token)
-                for j, t in enumerate(sel_token):
-                    arr[i, idx, j, t] = 1
+            for idx, one_tok_seq in enumerate(tok_seq):
+                out_one_tok_seq = one_tok_seq[:-1]
+                ret_len[b, idx] = len(out_one_tok_seq)
+                for t, tok_id in enumerate(out_one_tok_seq):
+                    ret_array[b, idx, t, tok_id] = 1
             if idx < 3:
-                arr[i, idx+1:, 0, 1] = 1
-                lens[i, idx+1:] = 1
+                ret_array[b, idx+1:, 0, 1] = 1
+                ret_len[b, idx+1:] = 1
 
-        arr_input = Variable(torch.from_numpy(arr))
+        ret_inp = torch.from_numpy(ret_array)
+        if self.gpu:
+            ret_inp = ret_inp.cuda()
+        ret_inp_var = Variable(ret_inp)
 
-        return arr_input, lens
+        return ret_inp_var, ret_len
 
-    def standardize_value(self, column_vec, lengths, max_length):
-    	dim = len(column_vec.shape)
-    	for i, num in enumerate(lengths):
-    		if num < max_length:
-    			if dim == 2:
-    				column_vec[i, num:] = -100
-    			elif dim == 3:
-    				column_vec[i, :, num:] = -100
-    			else:
-    				column_vec[i, :, :, num:] = -100
-    	return column_vec
-
-    def forward(self, x_emb, x_lens, col_input_emb, col_name_lens, col_lens, col_num, op_where, op_conditions, reinforce=False):
-    	dim = len(x_lens)
-    	max_col_len = max(col_lens)
-    	max_x_len = max(x_lens)
-		
-        '''
-        predict number of where conditions
-        '''
-    	encoded_col_name, _ = col_name_encode(col_input_emb, col_name_lens, col_lens, self.number_encode_colname)
-    	col_val = self.number_col_att(encoded_col_name).squeeze()
-
-    	# only maintain relevant column values
-    	col_val = self.standardize_value(col_val, col_lens, max_col_len)
-
-    	col_softmax = self.softmax(col_val)
-    	K_num_col = (encoded_col_name * col_softmax.unsqueeze(2)).sum(1)
-
-    	# create hidden units and use them to generate encoded tensors for predicting the number
-    	hidden1 = self.number_hid1(K_num_col).view(dim, 4, self.N_h//2).transpose(0, 1).contiguous()
-    	hidden2 = self.number_hid2(K_num_col).view(dim, 4, self.N_h//2).transpose(0, 1).contiguous()
-    	num_encoded, _ = run_lstm(self.number_lstm, x_emb, x_lens, hidden=(hidden1, hidden2))
-
-    	num_val = self.number_att(num_encoded).squeeze()
-    	num_val = self.standardize_value(num_val, col_lens, max_col_len)
-
-    	num_softmax = self.softmax(num_val)
-    	K_num = (num_encoded * num_softmax.unsqueeze(2).expand_as(num_encoded)).sum(1)
-    	number_score = self.number_out(K_num)
-
-    	'''
-		predict columns in where clause
-    	'''
-    	encoded_col_name2, _ = col_name_encode(col_input_emb, col_name_lens, col_lens, self.column_encode_colname)
-    	col_encoded, _ = run_lstm(self.column_lstm, x_emb, x_lens)
-
-    	col_val = torch.bmm(encoded_col_name2, self.column_att(col_encoded).transpose(1,2))
-    	col_val = self.standardize_value(col_val, x_lens, max_x_len)
-
-    	col_softmax = self.softmax(col_val.view(-1, max_x_len)).view(dim, -1, max_x_len)
-    	K_col = (col_encoded.unsqueeze(1) * col_softmax.unsqueeze(3)).sum(2)
-
-    	col_score = self.column_out(self.column_out_K(K_col) + self.column_out_col(encoded_col_name2)).squeeze()
-    	col_score = self.standardize_value(col_score, col_lens, max_col_len)
-
-    	'''
-		predict operator(s) in the where clause
-    	'''
-    	if op_conditions:
-    		chosen_ops = [[x[0] for x in cond] for cond in op_conditions]
-    	else:
-    		# if no op_conditions, use the meaningful value we generated earlier (those that are not -100)
-    		sorted_nums = np.argmax(number_score.data.cpu().numpy(), axis=1)
-    		chosen_ops = [list(np.argsort(-col_score.data.cpu().numpy()[b])[:sorted_nums[b]]) for b in range(len(sorted_nums))]
+    def standardize_value(self, column_vec, lengths):
+        dim = len(column_vec.shape)
+        max_length = max(lengths)
+        for i, num in enumerate(lengths):
+            if num < max_length:
+                if dim == 2:
+                    column_vec[i, num:] = -100
+                elif dim == 3:
+                    column_vec[i, :, num:] = -100
+                else:
+                    column_vec[i, :, :, num:] = -100
+        return column_vec
 
 
-    	encoded_col_name3, _ = col_name_encode(col_input_emb, col_name_lens, col_lens, self.op_encode_colname)
-    	col_emb = []
-    	for i in range(dim):
-    		emb = torch.stack([encoded_col_name3[i, j] for j in chosen_ops[i]] + [encoded_col_name3[i, 0]] * (4-len(chosen_ops[i])))
-    		col_emb.append(emb)
-    	col_emb = torch.stack(col_emb)
+    def forward(self, x_emb_var, x_len, col_inp_var, col_name_len,
+            col_len, col_num, gt_where, gt_cond, reinforce):
+        max_x_len = max(x_len)
+        B = len(x_len)
+        if reinforce:
+            raise NotImplementedError('Our model doesn\'t have RL')
 
-    	op_encoded, _ = run_lstm(self.op_lstm, x_emb, x_lens)
-    	op_val = torch.matmul(self.op_att(op_encoded).unsqueeze(1), col_emb.unsqueeze(3)).squeeze()
-    	op_val = self.standardize_value(op_val, x_lens, max_x_len)
+        # Predict the number of conditions
+        # First use column embeddings to calculate the initial hidden unit
+        # Then run the LSTM and predict condition number.
+        e_num_col, col_num = col_name_encode(col_inp_var, col_name_len,
+                col_len, self.cond_num_name_enc)
+        num_col_att_val = self.cond_num_col_att(e_num_col).squeeze()
+        num_col_att_val = self.standardize_value(num_col_att_val, col_num)
+        num_col_att = self.softmax(num_col_att_val)
+        K_num_col = (e_num_col * num_col_att.unsqueeze(2)).sum(1)
+        cond_num_h1 = self.cond_num_col2hid1(K_num_col).view(
+                B, 4, self.N_h/2).transpose(0, 1).contiguous()
+        cond_num_h2 = self.cond_num_col2hid2(K_num_col).view(
+                B, 4, self.N_h/2).transpose(0, 1).contiguous()
 
-    	op_softmax = self.softmax(op_val)
-    	K_op = (op_encoded.unsqueeze(1) * op_softmax.unsqueeze(3)).sum(2)
+        h_num_enc, _ = run_lstm(self.cond_num_lstm, x_emb_var, x_len,
+                hidden=(cond_num_h1, cond_num_h2))
+        num_att_val = self.cond_num_att(h_num_enc).squeeze()
+        num_att_val = self.standardize_value(num_att_val, x_len)
+        num_att = self.softmax(num_att_val)
+        K_cond_num = (h_num_enc * num_att.unsqueeze(2).expand_as(
+            h_num_enc)).sum(1)
+        cond_num_score = self.cond_num_out(K_cond_num)
 
-    	op_score = self.op_out(self.op_out_K(K_op) + self.op_out_col(col_emb)).squeeze()
+        #Predict the columns of conditions
+        e_cond_col, _ = col_name_encode(col_inp_var, col_name_len, col_len,
+                self.cond_col_name_enc)
 
-    	'''
-		predict values in the where clause
-    	'''
-    	str_encoded, _ = run_lstm(self.str_lstm, x_emb, x_lens)
-    	encoded_col_name4, _ = col_name_encode(col_input_emb, col_name_lens, col_lens, self.str_encode_colname)
+        h_col_enc, _ = run_lstm(self.cond_col_lstm, x_emb_var, x_len)
+        if self.use_ca:
+            col_att_val = torch.bmm(e_cond_col,
+                    self.cond_col_att(h_col_enc).transpose(1, 2))
+            col_att_val = self.standardize_value(col_att_val, x_len)
+            col_att = self.softmax(col_att_val.view(
+                (-1, max_x_len))).view(B, -1, max_x_len)
+            K_cond_col = (h_col_enc.unsqueeze(1) * col_att.unsqueeze(3)).sum(2)
+        else:
+            col_att_val = self.cond_col_att(h_col_enc).squeeze()
+            col_att_val = self.standardize_value(col_att_val, x_len)
+            col_att = self.softmax(col_att_val)
+            K_cond_col = (h_col_enc *
+                    col_att_val.unsqueeze(2)).sum(1).unsqueeze(1)
 
-    	col_emb = []
-    	for i in range(dim):
-    		emb = torch.stack([encoded_col_name4[i, j] for j in chosen_ops[i]] + [encoded_col_name4[i, 0]] * (4-len(chosen_ops[i])))
-    		col_emb.append(emb)
-    	col_emb = torch.stack(col_emb)
+        cond_col_score = self.cond_col_out(self.cond_col_out_K(K_cond_col) +
+                self.cond_col_out_col(e_cond_col)).squeeze()
+        cond_col_score = self.standardize_value(cond_col_score, col_num)
 
-    	if op_where:
-    		tok_seqs, tok_lens = self.generate_condition_batch(op_where)
-    		str_s, _ = self.str_decoder(tok_seqs.view(dim*4, -1, self.max_tok_num))
-    		str_s = str_s.contiguous().view(dim, 4, -1, self.N_h)
+        #Predict the operator of conditions
+        chosen_col_gt = []
+        if gt_cond is None:
+            cond_nums = np.argmax(cond_num_score.data.cpu().numpy(), axis=1)
+            col_scores = cond_col_score.data.cpu().numpy()
+            chosen_col_gt = [list(np.argsort(-col_scores[b])[:cond_nums[b]])
+                    for b in range(len(cond_nums))]
+        else:
+            chosen_col_gt = [ [x[0] for x in one_gt_cond] for 
+                    one_gt_cond in gt_cond]
 
-    		str_encoded_h = str_encoded.unsqueeze(1).unsqueeze(1)
-    		str_s_g = str_s.unsqueeze(3)
-    		col_emb = col_emb.unsqueeze(2).unsqueeze(2)
+        e_cond_col, _ = col_name_encode(col_inp_var, col_name_len,
+                col_len, self.cond_op_name_enc)
+        col_emb = []
+        for b in range(B):
+            cur_col_emb = torch.stack([e_cond_col[b, x] 
+                for x in chosen_col_gt[b]] + [e_cond_col[b, 0]] *
+                (4 - len(chosen_col_gt[b])))  # Pad the columns to maximum (4)
+            col_emb.append(cur_col_emb)
+        col_emb = torch.stack(col_emb)
 
-    		str_score = self.str_out(self.str_out_h(str_encoded_h) + self.str_out_g(str_s_g) + self.str_out_col(col_emb)).squeeze()
-    		str_score = self.standardize_value(str_score, x_lens, max_x_len)
+        h_op_enc, _ = run_lstm(self.cond_op_lstm, x_emb_var, x_len)
+        if self.use_ca:
+            op_att_val = torch.matmul(self.cond_op_att(h_op_enc).unsqueeze(1),
+                    col_emb.unsqueeze(3)).squeeze()
+            op_att_val = self.standardize_value(op_att_val, x_len)
+            op_att = self.softmax(op_att_val.view(B*4, -1)).view(B, 4, -1)
+            K_cond_op = (h_op_enc.unsqueeze(1) * op_att.unsqueeze(3)).sum(2)
+        else:
+            op_att_val = self.cond_op_att(h_op_enc).squeeze()
+            op_att_val = self.standardize_value(op_att_val, x_len)
+            op_att = self.softmax(op_att_val)
+            K_cond_op = (h_op_enc * op_att.unsqueeze(2)).sum(1).unsqueeze(1)
 
-    	else:
-            str_encoded_h = str_encoded.unsqueeze(1).unsqueeze(1)
-            col_emb = col_emb.unsqueeze(2).unsqueeze(2)
-            str_scores = []
+        cond_op_score = self.cond_op_out(self.cond_op_out_K(K_cond_op) +
+                self.cond_op_out_col(col_emb)).squeeze()
 
-            input_matrix = np.zeros((dim*4, 1, self.max_tok_num), dtype=np.float32)
-            input_matrix[:, 0, 0] = 1
-            input_matrix = Variable(torch.from_numpy(input_matrix))
+        #Predict the string of conditions
+        h_str_enc, _ = run_lstm(self.cond_str_lstm, x_emb_var, x_len)
+        e_cond_col, _ = col_name_encode(col_inp_var, col_name_len,
+                col_len, self.cond_str_name_enc)
+        col_emb = []
+        for b in range(B):
+            cur_col_emb = torch.stack([e_cond_col[b, x]
+                for x in chosen_col_gt[b]] +
+                [e_cond_col[b, 0]] * (4 - len(chosen_col_gt[b])))
+            col_emb.append(cur_col_emb)
+        col_emb = torch.stack(col_emb)
 
-            str_s, hidden = self.str_decoder(input_matrix)
+        if gt_where is not None:
+            gt_tok_seq, gt_tok_len = self.gen_gt_batch(gt_where)
+            g_str_s_flat, _ = self.cond_str_decoder(
+                    gt_tok_seq.view(B*4, -1, self.max_tok_num))
+            g_str_s = g_str_s_flat.contiguous().view(B, 4, -1, self.N_h)
 
-            for i in range(50):
-      	        str_s, hidden = self.str_decoder(input_matrix, hidden)
-      	        str_s = str_s.view(dim, 4, 1, self.N_h)
-                str_s_g = str_s.unsqueeze(3)
+            h_ext = h_str_enc.unsqueeze(1).unsqueeze(1)
+            g_ext = g_str_s.unsqueeze(3)
+            col_ext = col_emb.unsqueeze(2).unsqueeze(2)
 
-               	str_score = self.str_out(self.str_out_h(str_encoded_h) + self.str_out_g(str_s_g) + self.str_out_col(col_emb)).squeeze()
-                str_score = self.standardize_value(str_score, x_lens, max_x_len)
+            cond_str_score = self.cond_str_out(
+                    self.cond_str_out_h(h_ext) + self.cond_str_out_g(g_ext) +
+                    self.cond_str_out_col(col_ext)).squeeze()
+            cond_str_score = self.standardize_value(cond_str_score, x_len)
+        else:
+            h_ext = h_str_enc.unsqueeze(1).unsqueeze(1)
+            col_ext = col_emb.unsqueeze(2).unsqueeze(2)
+            scores = []
 
-               	_, ans_tok = str_score.view(dim*4, max_x_len).max(1)
-               	ans_tok = ans_tok.data
+            t = 0
+            init_inp = np.zeros((B*4, 1, self.max_tok_num), dtype=np.float32)
+            init_inp[:,0,0] = 1  #Set the <BEG> token
+            if self.gpu:
+                cur_inp = Variable(torch.from_numpy(init_inp).cuda())
+            else:
+                cur_inp = Variable(torch.from_numpy(init_inp))
+            cur_h = None
+ 
+            while t < 50:
+                if cur_h:
+                    g_str_s_flat, cur_h = self.cond_str_decoder(cur_inp, cur_h)
+                else:
+                    g_str_s_flat, cur_h = self.cond_str_decoder(cur_inp)
 
-               	input_matrix = Variable(torch.zeros(dim*4, self.max_tok_num).scatter_(1, ans_tok.unsqueeze(1), 1)).unsqueeze(1)
+                g_str_s = g_str_s_flat.view(B, 4, 1, self.N_h)
+                g_ext = g_str_s.unsqueeze(3)
 
-                str_scores.append(str_score)
+                cur_cond_str_score = self.cond_str_out(
+                        self.cond_str_out_h(h_ext) + self.cond_str_out_g(g_ext)
+                        + self.cond_str_out_col(col_ext)).squeeze()
+                cur_cond_str_score = self.standardize_value(cur_cond_str_score, x_len)
 
-            str_score = torch.stack(str_scores, 2)
-            str_score = self.standardize_value(str_score, x_lens, max_x_len)
-        return (number_score, col_score, op_score, str_score)
+                scores.append(cur_cond_str_score)
 
+                _, ans_tok_var = cur_cond_str_score.view(B*4, max_x_len).max(1)
+                ans_tok = ans_tok_var.data.cpu()
+                data = torch.zeros(B*4, self.max_tok_num).scatter_(
+                        1, ans_tok.unsqueeze(1), 1)
+                if self.gpu:  #To one-hot
+                    cur_inp = Variable(data.cuda())
+                else:
+                    cur_inp = Variable(data)
+                cur_inp = cur_inp.unsqueeze(1)
 
+                t += 1
 
+            cond_str_score = torch.stack(scores, 2)
+            cond_str_score = self.standardize_value(cond_str_score, x_len)
 
+        cond_score = (cond_num_score,
+                cond_col_score, cond_op_score, cond_str_score)
+        return cond_score
