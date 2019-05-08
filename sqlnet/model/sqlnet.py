@@ -7,6 +7,7 @@ import numpy as np
 from modules.word_embedding import WordEmbedding
 from modules.aggregator_predict import AggPredictor
 from modules.selection_predict import SelPredictor
+from modules.table_predict import TablePredictor
 from modules.sqlnet_condition_predict import SQLNetCondPredictor
 
 
@@ -26,7 +27,6 @@ class SQLNet(nn.Module):
         self.SQL_TOK = ['<UNK>', '<END>', 'WHERE', 'AND',
                 'EQL', 'GT', 'LT', '<BEG>']
         self.COND_OPS = ['EQL', 'GT', 'LT']
-
         #Word embedding
         if trainable_emb:
             self.agg_embed_layer = WordEmbedding(word_emb, N_word, gpu,
@@ -45,6 +45,10 @@ class SQLNet(nn.Module):
         #Predict selected column
         self.sel_pred = SelPredictor(N_word, N_h, N_depth,
                 self.max_tok_num, use_ca=use_ca)
+        
+        # Predict which table to use
+        self.table_pred = TablePredictor(N_word, N_h, N_depth,
+                self.max_tok_num, use_ca=use_ca)
 
         #Predict number of cond
         self.cond_pred = SQLNetCondPredictor(N_word, N_h, N_depth,
@@ -52,6 +56,8 @@ class SQLNet(nn.Module):
 
 
         self.CE = nn.CrossEntropyLoss()
+        self.MSE = nn.MSELoss()
+        self.BCE = nn.BCELoss()
         self.softmax = nn.Softmax()
         self.log_softmax = nn.LogSoftmax()
         self.bce_logit = nn.BCEWithLogitsLoss()
@@ -97,6 +103,7 @@ class SQLNet(nn.Module):
 
         #Predict aggregator
         if self.trainable_emb:
+            # print("trainable_emb")
             if pred_agg:
                 x_emb_var, x_len = self.agg_embed_layer.gen_x_batch(q, col)
                 col_inp_var, col_name_len, col_len = \
@@ -121,7 +128,18 @@ class SQLNet(nn.Module):
                 cond_score = self.cond_pred(x_emb_var, x_len, col_inp_var,
                         col_name_len, col_len, col_num,
                         gt_where, gt_cond, reinforce=reinforce)
+            
+            if pred_agg==False and pred_sel==False and pred_cond==False:
+                # print("Return Table Score")
+                x_emb_var, x_len = self.sel_embed_layer.gen_x_batch(q, col)
+                col_inp_var, col_name_len, col_len = \
+                        self.sel_embed_layer.gen_col_batch(col)
+                max_x_len = max(x_len)
+                table_score = self.table_pred(x_emb_var, x_len, col_inp_var,
+                        col_name_len, col_len, col_num)
+
         else:
+            # print("No trainable Embedding")
             x_emb_var, x_len = self.embed_layer.gen_x_batch(q, col)
             col_inp_var, col_name_len, col_len = \
                     self.embed_layer.gen_col_batch(col)
@@ -133,19 +151,51 @@ class SQLNet(nn.Module):
             if pred_sel:
                 sel_score = self.sel_pred(x_emb_var, x_len, col_inp_var,
                         col_name_len, col_len, col_num)
-
+                
             if pred_cond:
                 cond_score = self.cond_pred(x_emb_var, x_len, col_inp_var,
                         col_name_len, col_len, col_num,
                         gt_where, gt_cond, reinforce=reinforce)
+            
+            if pred_agg==False and pred_sel==False and pred_cond==False:
+                table_score = self.table_pred(x_emb_var, x_len, col_inp_var,
+                        col_name_len, col_len, col_num)
+        
+        if pred_agg==False and pred_sel==False and pred_cond==False:
+            # print("Return Table Score")
+            return table_score
+        else:
+            # print("Return Triple Score")
+            return (agg_score, sel_score, cond_score)
+    
+    def check_table_acc(self, score, label_seq):
+        # print("Score", score)
+        # print("label_seq", label_seq)
+        err_num = 0
+        for i in range(len(score)):
+            if score[i][0]<score[i][1] and label_seq[i] == 0 or score[i][0]>score[i][1] and label_seq[i] == 1:
+                err_num += 1
+        # print("err_num", err_num)
+        return err_num
+        
 
-        return (agg_score, sel_score, cond_score)
-
-    def loss(self, score, truth_num, pred_entry, gt_where):
-        pred_agg, pred_sel, pred_cond = pred_entry
-        agg_score, sel_score, cond_score = score
-
+    def loss(self, score, truth_num, pred_entry, gt_where, label_seq=None):
         loss = 0
+        pred_agg, pred_sel, pred_cond = pred_entry
+        if label_seq != None:
+            # print("score", score)
+            # print("label_seq", label_seq)
+            # data = torch.from_numpy(np.array(label_seq).astype(float)).type("torch.FloatTensor")
+            data = torch.from_numpy(np.array(label_seq)).type("torch.LongTensor")
+            if self.gpu:
+                table_truth_var = Variable(data.cuda())
+            else:
+                table_truth_var = Variable(data)
+            loss += self.CE(score, table_truth_var)
+            return loss
+        else:
+            agg_score, sel_score, cond_score = score
+            
         if pred_agg:
             agg_truth = map(lambda x:x[0], truth_num)
             data = torch.from_numpy(np.array(agg_truth))

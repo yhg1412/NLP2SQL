@@ -100,13 +100,14 @@ if __name__ == '__main__':
             with open('question.json') as f:
                 sql_data = json.load(f)
                 sql_data = [sql_data, sql_data]
-                print("sql_data---------- ", sql_data)
+                
             with open('table.json') as f:
                 table_data = json.load(f)
-                print(table_data)
+                print("----------table_data---------- ",json.dumps(table_data))
                 table_data = {sql_data[0]['table_id']: table_data}
             sql_data = gen_sql_data("How many dollars is the purse when the margin of victory is 8 strokes")
             sql_data = [sql_data, sql_data]
+            print("----------sql_data---------- ", sql_data)
             print("Predicted Query:", pred_query_string(model, sql_data, table_data, DEV_DB))
             # Process user input question
             tid = list(table_data.keys())[0]

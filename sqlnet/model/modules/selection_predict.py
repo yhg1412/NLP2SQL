@@ -27,6 +27,7 @@ class SelPredictor(nn.Module):
         self.sel_out_col = nn.Linear(N_h, N_h)
         self.sel_out = nn.Sequential(nn.Tanh(), nn.Linear(N_h, 1))
         self.softmax = nn.Softmax()
+        self.N_h = N_h
 
     def nice_print(s, x):
         print(s, x.shape, x)
@@ -63,15 +64,21 @@ class SelPredictor(nn.Module):
             att = self.softmax(att_val)
             K_sel = (h_enc * att.unsqueeze(2).expand_as(h_enc)).sum(1)
             K_sel_expand=K_sel.unsqueeze(1)
+        print("N_h", self.N_h)
         print("h_enc", h_enc.shape)
         print("att_val", att_val.shape)
         print("K_sel", K_sel.shape)
         print("K_sel_expand", K_sel_expand.shape)
-        sel_score = self.sel_out( self.sel_out_K(K_sel_expand) + \
-                self.sel_out_col(e_col) ).squeeze()
+        sel_out_K_out = self.sel_out_K(K_sel_expand)
+        sel_out_col_out = self.sel_out_col(e_col)
+        sel_out_plus = sel_out_K_out + sel_out_col_out
+        print("sel_out_K_out", sel_out_K_out.shape)
+        print("sel_out_col_out", sel_out_col_out.shape)
+        print("sel_out_plus", sel_out_plus.shape)
+        sel_score = self.sel_out( sel_out_plus ).squeeze()
         max_col_num = max(col_num)
         for idx, num in enumerate(col_num):
             if num < max_col_num:
                 sel_score[idx, num:] = -100
-
+        print("sel_score shape", sel_score.shape)
         return sel_score
