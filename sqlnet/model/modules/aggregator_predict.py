@@ -52,6 +52,7 @@ class AggPredictor(nn.Module):
         for idx, num in enumerate(x_len):
             if num < max_x_len:
                 att_val[idx, num:] = -100
+        print("att_val shape", att_val.shape)
         att = self.softmax(att_val)
 
         K_agg = (h_enc * att.unsqueeze(2).expand_as(h_enc)).sum(1)

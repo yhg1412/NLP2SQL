@@ -51,22 +51,12 @@ class Seq2SQLCondPredictor(nn.Module):
 
     def forward(self, x_emb_var, x_len, col_inp_var, col_name_len, col_len,
             col_num, gt_where, gt_cond, reinforce):
-        """
-        x_emb_var: sample embeddings: (batch_size, max_emb_len, 300)
-        x_len: len of each embedding: (batch_size, )
-        col_inp_var: : (col_nam_len, ,300)
-        col_nam_len: 
-        col_len: : (batch_size, )
-        col_num: : [] of len(batch_size)
-        
-        """
-        max_x_len = max(x_len) # max len of each x (sample's embedding)
-        B = len(x_len) # batch size
+        max_x_len = max(x_len)
+        B = len(x_len)
 
         h_enc, hidden = run_lstm(self.cond_lstm, x_emb_var, x_len)
         decoder_hidden = tuple(torch.cat((hid[:2], hid[2:]),dim=2) 
                 for hid in hidden)
-#        print(h_enc.shape, decoder_hidden.shape)
         if gt_where is not None:
             gt_tok_seq, gt_tok_len = self.gen_gt_batch(gt_where, gen_inp=True)
             g_s, _ = run_lstm(self.cond_decoder,
@@ -83,7 +73,6 @@ class Seq2SQLCondPredictor(nn.Module):
             h_enc_expand = h_enc.unsqueeze(1)
             scores = []
             choices = []
-            ms = []
             done_set = set()
 
             t = 0
@@ -100,27 +89,18 @@ class Seq2SQLCondPredictor(nn.Module):
 
                 cur_cond_score = self.cond_out(self.cond_out_h(h_enc_expand) +
                         self.cond_out_g(g_s_expand)).squeeze()
-                        
                 for b, num in enumerate(x_len):
                     if num < max_x_len:
-                        cur_cond_score[b, num:] = -np.inf
+                        cur_cond_score[b, num:] = -100
                 scores.append(cur_cond_score)
 
                 if not reinforce:
                     _, ans_tok_var = cur_cond_score.view(B, max_x_len).max(1)
                     ans_tok_var = ans_tok_var.unsqueeze(1)
                 else:
-                    probs = self.softmax(cur_cond_score)
-                    
-                    m = torch.distributions.Categorical(probs)
-                    ans_tok_var = m.sample().unsqueeze(1)
-#                    ans_tok_var = self.softmax(cur_cond_score).multinomial(1)
-                    
+                    ans_tok_var = self.softmax(cur_cond_score).multinomial()
                     choices.append(ans_tok_var)
-                    ms.append(m)
-                    
                 ans_tok = ans_tok_var.data.cpu()
-                
                 if self.gpu:  #To one-hot
                     cur_inp = Variable(torch.zeros(
                         B, self.max_tok_num).scatter_(1, ans_tok, 1).cuda())
@@ -137,6 +117,6 @@ class Seq2SQLCondPredictor(nn.Module):
             cond_score = torch.stack(scores, 1)
 
         if reinforce:
-            return cond_score, choices, ms
+            return cond_score, choices
         else:
             return cond_score

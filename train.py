@@ -24,6 +24,8 @@ if __name__ == '__main__':
             help='If set, then train Seq2SQL model; default is SQLNet model.')
     parser.add_argument('--train_emb', action='store_true',
             help='Train word embedding for SQLNet(requires pretrained model).')
+    parser.add_argument('--table', action='store_true',
+            help='Train Predict Table')
     args = parser.parse_args()
 
     print(args)
@@ -36,9 +38,9 @@ if __name__ == '__main__':
         BATCH_SIZE=15
     else:
         USE_SMALL=False
-        GPU=True
+        GPU=False
         BATCH_SIZE=64
-    TRAIN_ENTRY=(True, True, True)  # (AGG, SEL, COND)
+    TRAIN_ENTRY=(False, False, False)  # (AGG, SEL, COND)
     TRAIN_AGG, TRAIN_SEL, TRAIN_COND = TRAIN_ENTRY
     learning_rate = 1e-4 if args.rl else 1e-3
 
@@ -100,6 +102,30 @@ if __name__ == '__main__':
                         'saved_model/epoch%d.cond_model%s'%(i+1, args.suffix))
                 torch.save(model.cond_pred.state_dict(), cond_m)
             print ' Best exec acc = %s, on epoch %s'%(best_acc, best_idx)
+    elif args.table:
+        t_acc = []
+        v_acc = []
+        loss_list = []
+        for i in range(50):
+            print 'Epoch %d @ %s'%(i+1, datetime.datetime.now())
+            loss = epoch_train_table(
+                    model, optimizer, BATCH_SIZE, 
+                    sql_data, table_data, TRAIN_ENTRY)
+            print ' Loss = %s'%loss
+            train_acc = epoch_acc_table(
+                    model, BATCH_SIZE, sql_data, table_data, TRAIN_ENTRY)
+            print ' Train acc_qm: %s\n   breakdown result: %s'%train_acc
+            #val_acc = epoch_token_acc(model, BATCH_SIZE, val_sql_data, val_table_data, TRAIN_ENTRY)
+            val_acc = epoch_acc_table(model,
+                    BATCH_SIZE, val_sql_data, val_table_data, TRAIN_ENTRY)
+            print ' Dev acc_qm: %s\n   breakdown result: %s'%val_acc
+            t_acc.append(train_acc[0])
+            v_acc.append(val_acc[0])
+            torch.save(model.table_pred.state_dict(), 'saved_model/epoch%d.table_model'%(i+1))
+            loss_list.append(loss)
+        print("t_acc", t_acc)
+        print("v_acc", v_acc)
+        print("losses", loss_list)
     else:
         init_acc = epoch_acc(model, BATCH_SIZE,
                 val_sql_data, val_table_data, TRAIN_ENTRY)

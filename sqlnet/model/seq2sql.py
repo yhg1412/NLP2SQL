@@ -183,36 +183,18 @@ class Seq2SQL(nn.Module):
     def reinforce_backward(self, score, rewards):
         agg_score, sel_score, cond_score = score
 
-        cond_score_score, cond_score_choices, cond_score_ms = cond_score
         cur_reward = rewards[:]
         eof = self.SQL_TOK.index('<END>')
-        
-        losses = []
-        
-        
-        
-        for t in range(len(cond_score_choices)):
+        for t in range(len(cond_score[1])):
             reward_inp = torch.FloatTensor(cur_reward).unsqueeze(1)
             if self.gpu:
                 reward_inp = reward_inp.cuda()
-                
-#            cond_score_choices[t].reinforce(reward_inp)                
-            loss = -cond_score_ms[t].log_prob(cond_score_choices[t]) * reward_inp
-            
-#            loss.backward()
-            losses.append(loss.sum(1).reshape((-1,1)))
-            
-            
-            
-            
+            cond_score[1][t].reinforce(reward_inp)
+
             for b in range(len(rewards)):
-                if cond_score_choices[t][b].data.cpu().numpy()[0] == eof:
+                if cond_score[1][t][b].data.cpu().numpy()[0] == eof:
                     cur_reward[b] = 0
-                    
-#        torch.autograd.backward(cond_score_choices, [None for _ in cond_score_choices])
-#        losses = torch.stack(losses, 1)
-        
-        torch.autograd.backward(losses, [None for _ in losses])
+        torch.autograd.backward(cond_score[1], [None for _ in cond_score[1]])
         return
 
     def check_acc(self, vis_info, pred_queries, gt_queries, pred_entry):

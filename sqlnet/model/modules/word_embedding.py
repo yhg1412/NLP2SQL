@@ -97,7 +97,7 @@ class WordEmbedding(nn.Module):
                 val = [self.word_emb.get(x, np.zeros(
                     self.N_word, dtype=np.float32)) for x in one_str]
             val_embs.append(val)
-            val_len[i] = len(val)
+            val_len[i] = len(val) if len(val) > 0 else 1
         max_len = max(val_len)
 
         if self.trainable:
